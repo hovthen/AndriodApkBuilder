@@ -1,0 +1,480 @@
+name: BugVideo Apks Builder - Lite
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "设置编译代码仓库"
+        type: string
+        required: true
+        default: "aaa1115910/bv"
+      branch:
+        description: "选择编译分支"
+        required: true
+        type: choice
+        default: "develop"
+        options:
+          - main
+          - master
+          - develop
+      channel:
+        description: "选择编译通道"
+        required: true
+        type: choice
+        default: "release"
+        options:
+          - alpha
+          - release
+          - alpha-debug
+          - release-debug
+      isSigningApks:
+        description: "是否对安装包进行签名"
+        required: true
+        type: boolean
+        default: true
+      GoogleServicesJson:
+        description: "自定义 google-services.json"
+        type: string
+        required: false
+
+run-name: Build BugVideo ${{ github.event.inputs.channel }} > Lite ${{ github.run_number }}@${{ github.triggering_actor }}
+jobs:
+  Check-Configs:
+    name: Check Configs
+    runs-on: ubuntu-latest
+    env:
+      actionRun: true
+    outputs:
+      Run: ${{ steps.actionRun.outputs.Run}}
+    steps:
+      - name: Check repository ownership
+        if: ${{ env.actionRun == 'true' }}
+        run: |
+          if [[ "${{ github.actor }}" != "${{ github.triggering_actor }}" ]]; then
+            echo "actionRun=false" >> $GITHUB_ENV
+            echo "Error: *发起 Action 的用户不是存储库的所有者*" >> $GITHUB_STEP_SUMMARY
+          else
+            time=$(TZ='Asia/Shanghai' date +"%Y-%m-%d %H:%M:%S")
+            echo "By: @${{ github.actor }} &nbsp;&nbsp; *at $time*" >> $GITHUB_STEP_SUMMARY
+          fi
+      - name: Check repository & branch and ownership
+        if: ${{ env.actionRun == 'true' }}
+        run: |
+          if curl -f -s "https://api.github.com/repos/${{ github.event.inputs.repository || 'aaa1115910/bv' }}/branches/${{ github.event.inputs.branch }}" > /dev/null; then
+            title="${{ github.event.inputs.repository || 'aaa1115910/bv' }} #${{ github.event.inputs.branch }}"
+            url="https://github.com/${{ github.event.inputs.repository || 'aaa1115910/bv' }}/tree/${{ github.event.inputs.branch }}"
+            echo "Use: *$title <$url>*" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "actionRun=false" >> $GITHUB_ENV
+            echo "Error: *选定存储库及其分支未公开或不存在*" >> $GITHUB_STEP_SUMMARY
+          fi
+      - name: Check google-services.json
+        if: ${{ env.actionRun == 'true' }}
+        run: |
+          if [[ -n "${{ github.event.inputs.GoogleServicesJson }}" ]]; then
+            echo 'Use: *自定义 google-services.json*' >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ]]; then
+            echo 'Use: *仓库已有 google-services.json*' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "actionRun=false" >> $GITHUB_ENV
+            echo "Error: *未找到 google-services.json*" >> $GITHUB_STEP_SUMMARY
+          fi
+      - name: Check signing.properties & key.jks
+        if: ${{ env.actionRun == 'true' && ( github.event.inputs.channel == 'release' || github.event.inputs.channel == 'release-debug' || github.event.inputs.isSigningApks == 'true' )}}
+        run: |
+          if [[ ${{ github.event.inputs.channel == 'release' || github.event.inputs.channel == 'release-debug' }} ]] ; then
+            echo 'Notice: *当前选择 release 必须签名*' >> $GITHUB_STEP_SUMMARY
+          else
+            if [[ ${{ github.event.inputs.isSigningApks == 'true' }} ]] ; then
+              echo 'Notice: *当前选择 alpha 可选签名，设置为需要签名*' >> $GITHUB_STEP_SUMMARY
+            else
+              echo 'Notice: *当前选择 alpha 可选签名，设置为无需签名*' >> $GITHUB_STEP_SUMMARY
+              exit 0
+            fi
+          fi
+          if [[ -n "${{ secrets.SIGNING_PROPERTIES }}" && -n "${{ secrets.SIGNING_KEY }}" ]] ; then
+            echo 'Use: *仓库已有 signing.properties & key.jks*' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "actionRun=false" >> $GITHUB_ENV
+            echo "Error: *未找到 signing.properties & key.jks*" >> $GITHUB_STEP_SUMMARY
+          fi
+      - name: Set Run Result to output #${{ env.actionRun }}
+        id: actionRun
+        run: echo "Run=${{ env.actionRun }}" >> $GITHUB_OUTPUT
+      - if: ${{ env.actionRun == 'true' }}
+        run: |
+          echo "Build: *${{ env.actionRun }}*" >> $GITHUB_STEP_SUMMARY
+          echo "PASS: *满足构建的基本条件*" >> $GITHUB_STEP_SUMMARY
+      - if: ${{ env.actionRun != 'true' }}
+        run: |
+          echo "Build: ${{ env.actionRun }}" >> $GITHUB_STEP_SUMMARY
+          echo "STOP: *不满足构建的基本条件，请检查并调整相应配置*\n\n如：签名文件、环境变量、工作秘钥等" >> $GITHUB_STEP_SUMMARY
+          echo "::error::不满足构建的基本条件"
+          exit 1
+
+  Build-BugVideo-Apks:
+    name: Build BugVideo Apks - Lite
+    needs: Check-Configs
+    if: ${{ needs.Check-Configs.result == 'success' && needs.Check-Configs.outputs.Run == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      Repo: ${{ github.event.inputs.repository || 'aaa1115910/bv' }}
+      Branch: ${{ github.event.inputs.branch }}
+      hasRelease: ${{ github.event.inputs.channel == 'release' || github.event.inputs.channel == 'release-debug' }}
+      hasAlpha: ${{ github.event.inputs.channel == 'alpha' || github.event.inputs.channel == 'alpha-debug' }}
+      hasDebug: ${{ github.event.inputs.channel == 'release-debug' || github.event.inputs.channel == 'alpha-debug' }}
+      artifacts: ''
+    outputs:
+      lNameRelease: ${{ steps.LDataRelease.outputs.lNameRelease }}
+      lNameAlpha: ${{ steps.LDataAlpha.outputs.lNameAlpha }}
+      lNameDebug: ${{ steps.LDataDebug.outputs.lNameDebug }}
+      dVerCodeAlpha: ${{ steps.DDataAlpha.outputs.dVerCodeAlpha }}
+      dVerNameAlpha: ${{ steps.DDataAlpha.outputs.dVerNameAlpha }}
+      dVerCodeRelease: ${{ steps.DDataRelease.outputs.dVerCodeRelease }}
+      dVerNameRelease: ${{ steps.DDataRelease.outputs.dVerNameRelease }}
+      dVerCodeDebug: ${{ steps.DDataDebug.outputs.dVerCodeDebug }}
+      dVerNameDebug: ${{ steps.DDataDebug.outputs.dVerNameDebug }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+      artifacts: ${{ env.artifacts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.Repo }}
+          ref: ${{ env.Branch }}
+          fetch-depth: 0
+          submodules: "true"
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+      - name: Chmod +x gradlew
+        run: |
+          readlink -f gradlew
+          echo "${{ github.workspace }}"
+          file="app/src/main/kotlin/dev/aaa1115910/bv/activities/MainActivity.kt"
+          chmod +x gradlew
+          if [[ -f "$file" ]]; then
+            chmod +x "$file"
+            sed -i 's/if (isMainlandChina) RegionBlockScreen() else HomeScreen()/HomeScreen()/' "$file"
+            exit 0
+          fi
+          if [[ -f "${{ github.workspace }}/$file" ]]; then
+            chmod +x "${{ github.workspace }}/$file"
+            sed -i 's/if (isMainlandChina) RegionBlockScreen() else HomeScreen()/HomeScreen()/' "${{ github.workspace }}/$file"
+            exit 0
+          else
+            echo "::error::文件不存在"
+          fi
+      - name: Set changelog to output
+        id: changelog
+        run: |
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$(git log -1 --pretty=short)" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Add google-services.json
+        env:
+          inputsGoogleServices: ${{ github.event.inputs.GoogleServicesJson }}
+          secretsGoogleServices: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [[ -n "${{ github.event.inputs.GoogleServicesJson }}" ]]; then
+            echo $inputsGoogleServices > app/google-services.json
+            echo "inputsGoogleServices"
+            exit 0
+          fi
+          if [[ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ]]; then
+            echo $secretsGoogleServices > app/google-services.json
+            echo "secretsGoogleServices"
+            exit 0
+          fi
+          exit 1
+      - name: Add signing.properties
+        if: ${{ env.hasRelease == 'true' || github.event.inputs.isSigningApks == 'true' }}
+        continue-on-error: true
+        run: echo "${{ secrets.SIGNING_PROPERTIES }}" > signing.properties
+      - name: Add key.jks
+        if: ${{ env.hasRelease == 'true' || github.event.inputs.isSigningApks == 'true' }}
+        continue-on-error: true
+        run: echo ${{ secrets.SIGNING_KEY }} | xxd -r -p > key.jks
+
+      # Build lite apk
+      - name: Build lite apk Release
+        if: ${{ github.event.inputs.channel == 'release' }}
+        continue-on-error: true
+        run: ./gradlew assembleLiteRelease
+      - name: Build lite apk Release & Debug
+        if: ${{ github.event.inputs.channel == 'release-debug' }}
+        continue-on-error: true
+        run: ./gradlew assembleLiteRelease assembleLiteDebug
+      - name: Build lite apk Alpha
+        if: ${{ github.event.inputs.channel == 'alpha' }}
+        continue-on-error: true
+        run: ./gradlew assembleLiteAlpha
+      - name: Build lite apk Alpha & Debug
+        if: ${{ github.event.inputs.channel == 'alpha-debug' }}
+        continue-on-error: true
+        run: ./gradlew assembleLiteAlpha assembleLiteDebug
+      
+      # lite Release
+      - name: Read lite release metadata
+        if: ${{ env.hasRelease == 'true' }}
+        id: LMetaRelease
+        continue-on-error: true
+        uses: juliangruber/read-file-action@v1
+        with:
+          path: app/build/outputs/apk/lite/release/output-metadata.json
+      - name: Parse lite release apks info
+        if: ${{ env.hasRelease == 'true' }}
+        id: LDataRelease
+        continue-on-error: true
+        run: |
+          echo "lNameRelease=${{ fromJson(steps.LMetaRelease.outputs.content).elements[0].outputFile }}" >> $GITHUB_ENV
+          echo "lNameRelease=${{ fromJson(steps.LMetaRelease.outputs.content).elements[0].outputFile }}" >> $GITHUB_OUTPUT
+      - name: Archive lite release metadata
+        if: ${{ env.hasRelease == 'true' }}
+        continue-on-error: true
+        id: LReleaseMetadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: LRelease metadata.json
+          path: app/build/outputs/apk/lite/release/output-metadata.json
+          if-no-files-found: ignore
+          compression-level: 9
+      - name: Echo lite Release Metadata
+        if: ${{ env.hasRelease == 'true' }}
+        continue-on-error: true
+        run: |
+          title="#${{ steps.LReleaseMetadata.outputs.artifact-id }}"
+          url=${{ steps.LReleaseMetadata.outputs.artifact-url }}
+          {
+            echo 'artifacts<<EOF'
+            echo "${{ env.artifacts }}"
+            echo " "
+            echo "### lite Releas"
+            echo "LReleaseMetadata: `$title`"
+            echo "&emsp;&emsp;*<$url>*"
+            echo EOF
+          } >> $GITHUB_ENV
+      - name: Archive lite release mappings.txt
+        if: ${{ env.hasRelease == 'true' }}
+        continue-on-error: true
+        id: LReleaseMappings
+        uses: actions/upload-artifact@v4
+        with:
+          name: LRelease mappings.txt
+          path: app/build/outputs/mapping/liteRelease
+          if-no-files-found: ignore
+          compression-level: 9
+      - name: Echo lite Release Mappings
+        if: ${{ env.hasRelease == 'true' }}
+        continue-on-error: true
+        run: |
+          title="#${{ steps.LReleaseMappings.outputs.artifact-id }}"
+          url=${{ steps.LReleaseMappings.outputs.artifact-url }}
+          {
+            echo 'artifacts<<EOF'
+            echo "${{ env.artifacts }}"
+            echo "LReleaseMappings: `$title`"
+            echo "&emsp;&emsp;*<$url>*"
+            echo EOF
+          } >> $GITHUB_ENV
+      - name: Archive lite release artifacts
+        if: ${{ env.hasRelease == 'true' }}
+        continue-on-error: true
+        id: LReleaseApk
+        uses: actions/upload-artifact@v4
+        with:
+          name: LRelease ${{ env.lNameRelease }}
+          path: app/build/outputs/apk/lite/release/${{ env.lNameRelease }}
+          if-no-files-found: ignore
+          compression-level: 0
+      - name: Echo lite LRelease Apk
+        if: ${{ env.hasRelease == 'true' }}
+        continue-on-error: true
+        run: |
+          title="#${{ steps.LReleaseApk.outputs.artifact-id }}"
+          url=${{ steps.LReleaseApk.outputs.artifact-url }}
+          {
+            echo 'artifacts<<EOF'
+            echo "${{ env.artifacts }}"
+            echo "LReleaseApk: `$title`"
+            echo "&emsp;&emsp;*<$url>*"
+            echo EOF
+          } >> $GITHUB_ENV
+
+      # lite Alpha
+      - name: Read lite alpha metadata
+        if: ${{ env.hasAlpha == 'true' }}
+        id: LMetaAlpha
+        continue-on-error: true
+        uses: juliangruber/read-file-action@v1
+        with:
+          path: app/build/outputs/apk/lite/alpha/output-metadata.json
+      - name: Parse lite alpha apks info
+        if: ${{ env.hasAlpha == 'true' }}
+        id: LDataAlpha
+        continue-on-error: true
+        run: |
+          echo "lNameAlpha=${{ fromJson(steps.LMetaAlpha.outputs.content).elements[0].outputFile }}" >> $GITHUB_ENV
+          echo "lNameAlpha=${{ fromJson(steps.LMetaAlpha.outputs.content).elements[0].outputFile }}" >> $GITHUB_OUTPUT
+      - name: Archive lite alpha metadata
+        if: ${{ env.hasAlpha == 'true' }}
+        continue-on-error: true
+        id: LAlphaMetadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: LAlpha metadata.json
+          path: app/build/outputs/apk/lite/alpha/output-metadata.json
+          if-no-files-found: ignore
+          compression-level: 9
+      - name: Echo lite Alpha Metadata
+        if: ${{ env.hasAlpha == 'true' }}
+        continue-on-error: true
+        run: |
+          title="#${{ steps.LAlphaMetadata.outputs.artifact-id }}"
+          url=${{ steps.LAlphaMetadata.outputs.artifact-url }}
+          {
+            echo 'artifacts<<EOF'
+            echo "${{ env.artifacts }}"
+            echo " "
+            echo "### lite Alpha"
+            echo "LAlphaMetadata: `$title`"
+            echo "&emsp;&emsp;*<$url>*"
+            echo EOF
+          } >> $GITHUB_ENV
+      - name: Archive lite alpha mappings.txt
+        if: ${{ env.hasAlpha == 'true' }}
+        continue-on-error: true
+        id: LAlphaMappings
+        uses: actions/upload-artifact@v4
+        with:
+          name: LAlpha mappings.txt
+          path: app/build/outputs/mapping/liteAlpha
+          if-no-files-found: ignore
+          compression-level: 9
+      - name: Echo lite Alpha Mappings
+        if: ${{ env.hasAlpha == 'true' }}
+        continue-on-error: true
+        run: |
+          title="#${{ steps.LAlphaMappings.outputs.artifact-id }}"
+          url=${{ steps.LAlphaMappings.outputs.artifact-url }}
+          {
+            echo 'artifacts<<EOF'
+            echo "${{ env.artifacts }}"
+            echo "LAlphaMappings: `$title`"
+            echo "&emsp;&emsp;*<$url>*"
+            echo EOF
+          } >> $GITHUB_ENV
+      - name: Archive lite alpha artifacts
+        if: ${{ env.hasAlpha == 'true' }}
+        continue-on-error: true
+        id: LAlphaApk
+        uses: actions/upload-artifact@v4
+        with:
+          name: LAlpha ${{ env.lNameAlpha }}
+          path: app/build/outputs/apk/lite/alpha/${{ env.lNameAlpha }}
+          if-no-files-found: ignore
+          compression-level: 9
+      - name: Echo lite Alpha Apk
+        if: ${{ env.hasAlpha == 'true' }}
+        continue-on-error: true
+        run: |
+          title="#${{ steps.LAlphaApk.outputs.artifact-id }}"
+          url=${{ steps.LAlphaApk.outputs.artifact-url }}
+          {
+            echo 'artifacts<<EOF'
+            echo "${{ env.artifacts }}"
+            echo "LAlphaApk: `$title`"
+            echo "&emsp;&emsp;*<$url>*"
+            echo EOF
+          } >> $GITHUB_ENV
+
+      # lite Debug
+      - name: Read lite debug metadata
+        if: ${{ env.hasDebug == 'true' }}
+        id: LMetaDebug
+        continue-on-error: true
+        uses: juliangruber/read-file-action@v1
+        with:
+          path: app/build/outputs/apk/lite/debug/output-metadata.json
+      - name: Parse lite debug apks info
+        if: ${{ env.hasDebug == 'true' }}
+        id: LDataDebug
+        continue-on-error: true
+        run: |
+          echo "lNameDebug=${{ fromJson(steps.LMetaDebug.outputs.content).elements[0].outputFile }}" >> $GITHUB_ENV
+          echo "lNameDebug=${{ fromJson(steps.LMetaDebug.outputs.content).elements[0].outputFile }}" >> $GITHUB_OUTPUT
+      - name: Archive lite debug metadata
+        if: ${{ env.hasDebug == 'true' }}
+        continue-on-error: true
+        id: LDebugMetadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: LDebug metadata.json
+          path: app/build/outputs/apk/lite/debug/output-metadata.json
+          if-no-files-found: ignore
+          compression-level: 9
+      - name: Echo lite Debug Metadata
+        if: ${{ env.hasDebug == 'true' }}
+        continue-on-error: true
+        run: |
+          title="#${{ steps.LDebugMetadata.outputs.artifact-id }}"
+          url=${{ steps.LDebugMetadata.outputs.artifact-url }}
+          {
+            echo 'artifacts<<EOF'
+            echo "${{ env.artifacts }}"
+            echo " "
+            echo "### lite Debug"
+            echo "LDebugMetadata: `$title`"
+            echo "&emsp;&emsp;*<$url>*"
+            echo EOF
+          } >> $GITHUB_ENV
+      - name: Archive lite debug artifacts
+        if: ${{ env.hasDebug == 'true' }}
+        continue-on-error: true
+        id: LDebugApk
+        uses: actions/upload-artifact@v4
+        with:
+          name: LDebug ${{ env.lNameDebug }}
+          path: app/build/outputs/apk/lite/debug/${{ env.lNameDebug }}
+          if-no-files-found: ignore
+          compression-level: 9
+      - name: Echo lite Debug Apk
+        if: ${{ env.hasDebug == 'true' }}
+        continue-on-error: true
+        run: |
+          title="#${{ steps.LDebugApk.outputs.artifact-id }}"
+          url=${{ steps.LDebugApk.outputs.artifact-url }}
+          {
+            echo 'artifacts<<EOF'
+            echo "${{ env.artifacts }}"
+            echo "LDebugApk: `$title`"
+            echo "&emsp;&emsp;*<$url>*"
+            echo EOF
+          } >> $GITHUB_ENV
+
+  Output-Changelog:
+    name: Output Changelog
+    needs: Build-BugVideo-Apks
+    if: ${{ needs.Build-BugVideo-Apks.result == 'success' && needs.Build-BugVideo-Apks.outputs.changelog != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Output Changelog
+        run: |
+          echo "${{ needs.Build-BugVideo-Apks.outputs.changelog }}" >> $GITHUB_STEP_SUMMARY
+
+  Output-Artifacts-Links:
+    name: Output Artifacts Links
+    needs: Build-BugVideo-Apks
+    if: ${{ needs.Build-BugVideo-Apks.result == 'success' && needs.Build-BugVideo-Apks.outputs.artifacts != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Output Artifacts
+        run: |
+          echo "## 附件下载链接: " >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "${{ needs.Build-BugVideo-Apks.outputs.artifacts }}" >> $GITHUB_STEP_SUMMARY
+          echo " " >> $GITHUB_STEP_SUMMARY
+          echo "┏ (゜ω゜)=👉 所有项目全部完成 Goodbye ~" >> $GITHUB_STEP_SUMMARY
