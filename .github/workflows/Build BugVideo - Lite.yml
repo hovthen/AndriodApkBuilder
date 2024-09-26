@@ -41,6 +41,7 @@ jobs:
   Check-Configs:
     name: Check Configs
     runs-on: ubuntu-latest
+    environment: BugVideo
     env:
       actionRun: true
     outputs:
@@ -117,6 +118,7 @@ jobs:
     needs: Check-Configs
     if: ${{ needs.Check-Configs.result == 'success' && needs.Check-Configs.outputs.Run == 'true' }}
     runs-on: ubuntu-latest
+    environment: BugVideo
     env:
       Repo: ${{ github.event.inputs.repository || 'aaa1115910/bv' }}
       Branch: ${{ github.event.inputs.branch }}

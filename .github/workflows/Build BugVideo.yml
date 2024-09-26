@@ -41,6 +41,7 @@ jobs:
   Check-Configs:
     name: Check Configs
     runs-on: ubuntu-latest
+    environment: BugVideo
     env:
       actionRun: true
     outputs:
@@ -73,7 +74,7 @@ jobs:
           if [[ -n "${{ github.event.inputs.GoogleServicesJson }}" ]]; then
             echo 'Use: *自定义 google-services.json*' >> $GITHUB_STEP_SUMMARY
           fi
-          if [[ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ]]; then
+          if [[ -n "${{ vars.GOOGLE_SERVICES_JSON }}" ]]; then
             echo 'Use: *仓库已有 google-services.json*' >> $GITHUB_STEP_SUMMARY
           else
             echo "actionRun=false" >> $GITHUB_ENV
@@ -92,7 +93,7 @@ jobs:
               exit 0
             fi
           fi
-          if [[ -n "${{ secrets.SIGNING_PROPERTIES }}" && -n "${{ secrets.SIGNING_KEY }}" ]] ; then
+          if [[ -n "${{ vars.SIGNING_PROPERTIES }}" && -n "${{ secrets.SIGNING_KEY }}" ]] ; then
             echo 'Use: *仓库已有 signing.properties & key.jks*' >> $GITHUB_STEP_SUMMARY
           else
             echo "actionRun=false" >> $GITHUB_ENV
@@ -117,6 +118,7 @@ jobs:
     needs: Check-Configs
     if: ${{ needs.Check-Configs.result == 'success' && needs.Check-Configs.outputs.Run == 'true' }}
     runs-on: ubuntu-latest
+    environment: BugVideo
     env:
       Repo: ${{ github.event.inputs.repository || 'aaa1115910/bv' }}
       Branch: ${{ github.event.inputs.branch }}
@@ -177,14 +179,14 @@ jobs:
       - name: Add google-services.json
         env:
           inputsGoogleServices: ${{ github.event.inputs.GoogleServicesJson }}
-          secretsGoogleServices: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          secretsGoogleServices: ${{ vars.GOOGLE_SERVICES_JSON }}
         run: |
           if [[ -n "${{ github.event.inputs.GoogleServicesJson }}" ]]; then
             echo $inputsGoogleServices > app/google-services.json
             echo "inputsGoogleServices"
             exit 0
           fi
-          if [[ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ]]; then
+          if [[ -n "${{ vars.GOOGLE_SERVICES_JSON }}" ]]; then
             echo $secretsGoogleServices > app/google-services.json
             echo "secretsGoogleServices"
             exit 0
