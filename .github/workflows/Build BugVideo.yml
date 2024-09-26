@@ -68,11 +68,6 @@ jobs:
             echo "actionRun=false" >> $GITHUB_ENV
             echo "Error: *选定存储库及其分支未公开或不存在*" >> $GITHUB_STEP_SUMMARY
           fi
-      - name: Debug environment variables
-        if: ${{ env.actionRun == 'true' }}
-        run: |
-          echo "Custom GoogleServicesJson: ${{ github.event.inputs.GoogleServicesJson }}"
-          echo "Env GOOGLE_SERVICES_JSON: ${{ vars.GOOGLE_SERVICES_JSON }}"
       - name: Check google-services.json
         if: ${{ env.actionRun == 'true' }}
         run: |
@@ -97,7 +92,7 @@ jobs:
               exit 0
             fi
           fi
-          if [[ -n "${{ vars.SIGNING_PROPERTIES }}" && -n "${{ secrets.SIGNING_KEY }}" ]] ; then
+          if [[ -n "${{ vars.SIGNING_PROPERTIES }}" && -n "${{ vars.SIGNING_KEY }}" ]] ; then
             echo 'Use: *仓库已有 signing.properties & key.jks*' >> $GITHUB_STEP_SUMMARY
           else
             echo "actionRun=false" >> $GITHUB_ENV
@@ -183,7 +178,7 @@ jobs:
       - name: Add google-services.json
         env:
           inputsGoogleServices: ${{ github.event.inputs.GoogleServicesJson }}
-          secretsGoogleServices: ${{ vars.GOOGLE_SERVICES_JSON }}
+          vars.oogleServices: ${{ vars.GOOGLE_SERVICES_JSON }}
         run: |
           if [[ -n "${{ github.event.inputs.GoogleServicesJson }}" ]]; then
             echo $inputsGoogleServices > app/google-services.json
@@ -191,19 +186,19 @@ jobs:
             exit 0
           fi
           if [[ -n "${{ vars.GOOGLE_SERVICES_JSON }}" ]]; then
-            echo $secretsGoogleServices > app/google-services.json
-            echo "secretsGoogleServices"
+            echo $vars.oogleServices > app/google-services.json
+            echo "vars.oogleServices"
             exit 0
           fi
           exit 1
       - name: Add signing.properties
         if: ${{ env.hasRelease == 'true' || github.event.inputs.isSigningApks == 'true' }}
         continue-on-error: true
-        run: echo "${{ secrets.SIGNING_PROPERTIES }}" > signing.properties
+        run: echo "${{ vars.SIGNING_PROPERTIES }}" > signing.properties
       - name: Add key.jks
         if: ${{ env.hasRelease == 'true' || github.event.inputs.isSigningApks == 'true' }}
         continue-on-error: true
-        run: echo ${{ secrets.SIGNING_KEY }} | xxd -r -p > key.jks
+        run: echo ${{ vars.SIGNING_KEY }} | xxd -r -p > key.jks
 
       # Build lite apk
       - name: Build lite apk Release
